@@ -1,6 +1,6 @@
 [package]
 name = "kotori"
-description = "The name inspired by Blue Archive character, Toyomu Kotori. The project is a wrapper for google translate api, heavily inspired by XUnity.AutoTranslator project. Educational purposes only."
+description = "The name inspired by Blue Archive character, Toyomu Kotori. Heavily inspired by XUnity.AutoTranslator project. Educational purposes only."
 version = "0.1.0"
 edition = "2021"
 
@@ -10,7 +10,8 @@ edition = "2021"
 anyhow = "1.0.75"
 clap = { version = "4.4.11", features = ["cargo", "derive"] }
 rand = "0.8.5"
-reqwest = { version = "0.11.22", features = ["json", "blocking"] }
+reqwest = { version = "0.11.22", features = ["cookies"] }
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
+serde_urlencoded = "0.7.1"
 tokio = { version = "1.35.0", features = ["full"] }
