@@ -106,10 +106,9 @@ pub async fn translate(
 
     let html = response.text().await?;
     let parsed_fsid = acquire_fsid_from_html(&html);
-
     let payload_string = create_payload_string(
         &endpoint_config.translate_rpc_id,
-        untranslated_text,
+        &untranslated_text,
         source_lang,
         destination_lang,
     );
@@ -125,11 +124,12 @@ pub async fn translate(
         .await?;
 
     let response = raw_response.text().await?;
-    let result = unwrap_response(&response)?;
+    let result = unwrap_response(&untranslated_text, &response)?;
 
     Ok(result)
 }
 
+#[cfg(feature = "blocking")]
 pub mod blocking {
     use crate::UPGRADE_INSECURE_REQUESTS;
     use crate::{
@@ -151,7 +151,6 @@ pub mod blocking {
             .build()?;
 
         let http_client = http_client.unwrap_or(&default_http_client);
-
         let endpoint_config = EndpointConfig::new();
 
         let response = http_client
@@ -164,7 +163,7 @@ pub mod blocking {
 
         let payload_string = create_payload_string(
             &endpoint_config.translate_rpc_id,
-            untranslated_text,
+            &untranslated_text,
             source_lang,
             destination_lang,
         );
@@ -179,7 +178,7 @@ pub mod blocking {
             .send()?;
 
         let response = raw_response.text()?;
-        let result = unwrap_response(&response)?;
+        let result = unwrap_response(&untranslated_text, &response)?;
 
         Ok(result)
     }
@@ -201,7 +200,7 @@ fn acquire_fsid_from_html<'a>(html: &'a String) -> &'a str {
 
 fn create_payload_string(
     rpc: &str,
-    untranslated_text: String,
+    untranslated_text: &String,
     source_lang: &str,
     destination_lang: &str,
 ) -> String {
@@ -214,7 +213,7 @@ fn create_payload_string(
     serde_urlencoded::to_string(map).unwrap()
 }
 
-fn unwrap_response(response: &String) -> anyhow::Result<String> {
+fn unwrap_response(untranslated_text: &String, response: &String) -> anyhow::Result<String> {
     let first_lookup = "[";
     let second_lookup = "\n";
     let first_lookup_index = response.find(first_lookup).unwrap();
@@ -223,7 +222,12 @@ fn unwrap_response(response: &String) -> anyhow::Result<String> {
     let second_lookup_index = cleaned_text.find(second_lookup).unwrap();
     let cleaned_text = &cleaned_text[0..second_lookup_index];
 
+    if !check_response_ok(response, untranslated_text) {
+        return Err(anyhow::anyhow!("Google Translate return error"));
+    }
+
     let outer_array: serde_json::Value = serde_json::from_str(cleaned_text)?;
+
     let inner_json_str = outer_array
         .as_array()
         .unwrap()
@@ -269,4 +273,8 @@ fn unwrap_response(response: &String) -> anyhow::Result<String> {
         .to_owned();
 
     Ok(translation_result)
+}
+
+fn check_response_ok(response: &String, untranslated_text: &String) -> bool {
+    response.contains(untranslated_text)
 }
