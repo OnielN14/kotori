@@ -22,7 +22,11 @@ $ kotori -i test --from en --to ja
 
 テスト
 ```
-
+## Development
+Run this command to build the executable
+```bash
+$ cargo build -r -F build-binary --bin kotori
+```
 
 ## Contributing
 Contributions are welcome! Feel free to open issues or submit pull requests to help improve this project.

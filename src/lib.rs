@@ -10,82 +10,111 @@ use reqwest::{
 };
 use serde_json;
 
+struct EndpointConfig<'a> {
+    user_backend: &'a str,
+    endpoint: String,
+    accept_language: Option<&'a str>,
+
+    req_id: i32,
+    translate_rpc_id: String,
+    version: String,
+}
+
+impl<'a> EndpointConfig<'a> {
+    pub fn new() -> Self {
+        let default_user_backend = "https://translate.google.com";
+        let accept_languages = [None, Some("en-US,en;q=0.9"), Some("en-US"), Some("en")];
+
+        let mut rng = thread_rng();
+
+        Self {
+            user_backend: default_user_backend,
+            endpoint: format!("{default_user_backend}/_/TranslateWebserverUi/data/batchexecute"),
+            accept_language: accept_languages[rng.gen_range(0..3)],
+            req_id: rng.gen_range(1..=100_000),
+            translate_rpc_id: "MkEWBc".to_owned(),
+            version: "boq_translate-webserver_20231212.05_p0".to_owned(),
+        }
+    }
+
+    pub fn build_query_str(&self, fsid: &str) -> String {
+        let query = [
+            format!("rpcids={}", self.translate_rpc_id),
+            format!("f.sid={}", fsid),
+            format!("bl={}", self.version),
+            "hl=en-US".to_owned(),
+            "soc-app=1".to_owned(),
+            "soc-platform=1".to_owned(),
+            "soc-device=1".to_owned(),
+            format!("_reqid={}", self.req_id),
+            "rt=c".to_owned(),
+        ]
+        .join("&");
+
+        query
+    }
+
+    pub fn build_endpoint(&self, fsid: &str) -> String {
+        format!("{}?{}", self.endpoint, self.build_query_str(fsid))
+    }
+
+    pub fn build_headers(&self) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+
+        headers.append(REFERER, format!("{}/", self.user_backend).parse().unwrap());
+        headers.append("X-Same-Domain", "1".parse().unwrap());
+        headers.append(DNT, "1".parse().unwrap());
+        headers.append(
+            CONTENT_TYPE,
+            "application/x-www-form-urlencoded;charset=UTF-8"
+                .parse()
+                .unwrap(),
+        );
+        headers.append(ACCEPT, "*/*".parse().unwrap());
+        headers.append(ORIGIN, self.user_backend.parse().unwrap());
+
+        if let Some(value) = self.accept_language {
+            headers.append(ACCEPT_LANGUAGE, value.parse().unwrap());
+        }
+
+        headers
+    }
+}
+
 pub async fn translate(
     untranslated_text: String,
     source_lang: &str,
     destination_lang: &str,
     user_agent: Option<String>,
+    http_client: Option<&reqwest::Client>,
 ) -> anyhow::Result<String> {
-    let user_agent = user_agent.unwrap_or("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_owned());
-    let http_client = reqwest::Client::builder()
+    let user_agent = resolve_user_agent(user_agent);
+    let default_http_client = reqwest::Client::builder()
         .cookie_store(true)
         .user_agent(user_agent)
         .build()?;
-    let mut rng = thread_rng();
 
-    let default_user_backend = "https://translate.google.com";
-    let endpoint = format!("{default_user_backend}/_/TranslateWebserverUi/data/batchexecute");
-    let accept_languages = [None, Some("en-US,en;q=0.9"), Some("en-US"), Some("en")];
-    let accept_language = accept_languages[rng.gen_range(0..3)];
+    let http_client = http_client.unwrap_or(&default_http_client);
 
-    let req_id = rng.gen_range(1..=100_000);
-    let translate_rpc_id = "MkEWBc";
-    let version = "boq_translate-webserver_20231212.05_p0";
+    let endpoint_config = EndpointConfig::new();
 
     let response = http_client
-        .get(default_user_backend)
+        .get(endpoint_config.user_backend)
         .header(UPGRADE_INSECURE_REQUESTS, 1)
         .send()
         .await?;
 
     let html = response.text().await?;
-
-    let lookup = "FdrFJe\":\"".to_owned();
-    let initial_index = html.find(&lookup).unwrap();
-    let start_index = initial_index + lookup.len();
-    let end_index = &html[start_index..].find('"').unwrap() + start_index;
-    let parsed_fsid = &html[start_index..end_index];
-
-    let query = [
-        format!("rpcids={}", translate_rpc_id),
-        format!("f.sid={}", parsed_fsid),
-        format!("bl={}", version),
-        "hl=en-US".to_owned(),
-        "soc-app=1".to_owned(),
-        "soc-platform=1".to_owned(),
-        "soc-device=1".to_owned(),
-        format!("_reqid={}", req_id),
-        "rt=c".to_owned(),
-    ]
-    .join("&");
-
+    let parsed_fsid = acquire_fsid_from_html(&html);
     let payload_string = create_payload_string(
-        translate_rpc_id,
-        untranslated_text,
+        &endpoint_config.translate_rpc_id,
+        &untranslated_text,
         source_lang,
         destination_lang,
     );
-    let endpoint_with_query = format!("{}?{}", endpoint, query);
+    let endpoint_with_query = endpoint_config.build_endpoint(parsed_fsid);
 
-    let mut headers = HeaderMap::new();
-    headers.append(
-        REFERER,
-        format!("{}/", default_user_backend).parse().unwrap(),
-    );
-    headers.append("X-Same-Domain", "1".parse().unwrap());
-    headers.append(DNT, "1".parse().unwrap());
-    headers.append(
-        CONTENT_TYPE,
-        "application/x-www-form-urlencoded;charset=UTF-8"
-            .parse()
-            .unwrap(),
-    );
-    headers.append(ACCEPT, "*/*".parse().unwrap());
-    headers.append(ORIGIN, default_user_backend.parse().unwrap());
-
-    if let Some(value) = accept_language {
-        headers.append(ACCEPT_LANGUAGE, value.parse().unwrap());
-    }
+    let headers = endpoint_config.build_headers();
 
     let raw_response = http_client
         .post(endpoint_with_query)
@@ -95,14 +124,83 @@ pub async fn translate(
         .await?;
 
     let response = raw_response.text().await?;
-    let result = unwrap_response(&response)?;
+    let result = unwrap_response(&untranslated_text, &response)?;
 
     Ok(result)
 }
 
+#[cfg(feature = "blocking")]
+pub mod blocking {
+    use crate::UPGRADE_INSECURE_REQUESTS;
+    use crate::{
+        acquire_fsid_from_html, create_payload_string, resolve_user_agent, unwrap_response,
+        EndpointConfig,
+    };
+
+    pub fn translate(
+        untranslated_text: String,
+        source_lang: &str,
+        destination_lang: &str,
+        user_agent: Option<String>,
+        http_client: Option<&reqwest::blocking::Client>,
+    ) -> anyhow::Result<String> {
+        let user_agent = resolve_user_agent(user_agent);
+        let default_http_client = reqwest::blocking::Client::builder()
+            .cookie_store(true)
+            .user_agent(user_agent)
+            .build()?;
+
+        let http_client = http_client.unwrap_or(&default_http_client);
+        let endpoint_config = EndpointConfig::new();
+
+        let response = http_client
+            .get(endpoint_config.user_backend)
+            .header(UPGRADE_INSECURE_REQUESTS, 1)
+            .send()?;
+
+        let html = response.text()?;
+        let parsed_fsid = acquire_fsid_from_html(&html);
+
+        let payload_string = create_payload_string(
+            &endpoint_config.translate_rpc_id,
+            &untranslated_text,
+            source_lang,
+            destination_lang,
+        );
+        let endpoint_with_query = endpoint_config.build_endpoint(parsed_fsid);
+
+        let headers = endpoint_config.build_headers();
+
+        let raw_response = http_client
+            .post(endpoint_with_query)
+            .body(payload_string)
+            .headers(headers)
+            .send()?;
+
+        let response = raw_response.text()?;
+        let result = unwrap_response(&untranslated_text, &response)?;
+
+        Ok(result)
+    }
+}
+
+fn resolve_user_agent(user_agent: Option<String>) -> String {
+    user_agent.unwrap_or("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_owned())
+}
+
+fn acquire_fsid_from_html<'a>(html: &'a String) -> &'a str {
+    let lookup = "FdrFJe\":\"".to_owned();
+    let initial_index = html.find(&lookup).unwrap();
+    let start_index = initial_index + lookup.len();
+    let end_index = &html[start_index..].find('"').unwrap() + start_index;
+    let parsed_fsid = &html[start_index..end_index];
+
+    parsed_fsid
+}
+
 fn create_payload_string(
     rpc: &str,
-    untranslated_text: String,
+    untranslated_text: &String,
     source_lang: &str,
     destination_lang: &str,
 ) -> String {
@@ -115,7 +213,7 @@ fn create_payload_string(
     serde_urlencoded::to_string(map).unwrap()
 }
 
-fn unwrap_response(response: &String) -> anyhow::Result<String> {
+fn unwrap_response(untranslated_text: &String, response: &String) -> anyhow::Result<String> {
     let first_lookup = "[";
     let second_lookup = "\n";
     let first_lookup_index = response.find(first_lookup).unwrap();
@@ -124,7 +222,12 @@ fn unwrap_response(response: &String) -> anyhow::Result<String> {
     let second_lookup_index = cleaned_text.find(second_lookup).unwrap();
     let cleaned_text = &cleaned_text[0..second_lookup_index];
 
+    if !check_response_ok(response, untranslated_text) {
+        return Err(anyhow::anyhow!("Google Translate return error"));
+    }
+
     let outer_array: serde_json::Value = serde_json::from_str(cleaned_text)?;
+
     let inner_json_str = outer_array
         .as_array()
         .unwrap()
@@ -170,4 +273,8 @@ fn unwrap_response(response: &String) -> anyhow::Result<String> {
         .to_owned();
 
     Ok(translation_result)
+}
+
+fn check_response_ok(response: &String, untranslated_text: &String) -> bool {
+    response.contains(untranslated_text)
 }
