@@ -7,6 +7,8 @@ The project is a CLI app that allow to translate text by leveraging google trans
 ```bash
 $ kotori --help
 
+The name inspired by Blue Archive character, Toyomu Kotori. Heavily inspired by XUnity.AutoTranslator project. Educational purposes only.
+
 Usage: kotori.exe [OPTIONS] --input <TEXT> --from <LANG> --to <LANG>
 
 Options:
@@ -14,7 +16,8 @@ Options:
       --from <LANG>             Check https://cloud.google.com/translate/docs/languages for Language code
       --to <LANG>               Check https://cloud.google.com/translate/docs/languages for Language code
       --useragent <USER_AGENT>  Customize user agent
-  -h, --help                    Print help
+      --machine <MACHINE_NAME>  Default using "google-translate-m" [possible values: google-translate, google-translate-m]
+  -h, --help                    Print help (see more with '--help')
   -V, --version                 Print version
 ```
 ```bash
