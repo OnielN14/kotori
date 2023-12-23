@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+
 use crate::default_user_agent;
 use html_escape;
 use reqwest::header::USER_AGENT;
+use serde_urlencoded;
 
 struct EndpointConfig<'a> {
     backend: &'a str,
@@ -19,12 +22,12 @@ impl<'a> EndpointConfig<'a> {
         source_lang: &'a str,
         destination_lang: &'a str,
     ) -> String {
-        let query = [
-            format!("sl={}", source_lang),
-            format!("tl={}", destination_lang),
-            format!("q={}", &untranslated_text),
-        ]
-        .join("&");
+        let query_map = HashMap::from([
+            ("sl", source_lang),
+            ("tl", destination_lang),
+            ("q", untranslated_text),
+        ]);
+        let query = serde_urlencoded::to_string(query_map).unwrap();
 
         format!("{}?{}", self.backend, query)
     }
@@ -101,6 +104,5 @@ fn get_value(html: &str) -> Option<&str> {
     let cleaned = &html[start_index..];
     let end_index = cleaned.find("</div>")?;
     let cleaned = &cleaned[..end_index];
-
     Some(cleaned)
 }
